@@ -1,0 +1,68 @@
+trigger:
+  branches:
+    include:
+    - dev
+    - main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: CommonCloudStorage
+  - name: buildConfiguration
+    value: 'Release'
+  - name: patch
+    value: $[counter(format('{0}.{1}', variables['Major'], variables['Minor']), 0)]
+  - name: packageVersion
+    value: '$(Major).$(Minor).$(patch)$(PackageVersionType)'
+
+stages:
+- stage: Build_Test
+  displayName: 'Build & Test'
+  jobs:
+  - job: Build
+    displayName: 'Build'
+    steps:
+    - checkout: self
+    - task: UseDotNet@2
+      displayName: 'Install .NET 8 SDK'
+      inputs:
+        packageType: sdk
+        version: 8.0.x
+        installationPath: $(Agent.ToolsDirectory)/dotnet
+        includePreviewVersions: true
+    - bash: dotnet --version
+    - task: DotNetCoreCLI@2
+      displayName: 'Dotnet Restore'
+      inputs:
+        command: 'restore'
+        arguments: '--configuration $(buildConfiguration)'
+        includeNuGetOrg: true
+        feedsToUse: 'config'
+        nugetConfigPath: './nuget.config'
+    - task: DotNetCoreCLI@2
+      displayName: 'Dotnet Build'
+      inputs:
+        command: 'build'
+        arguments: '--configuration $(buildConfiguration) -p:Version=$(packageVersion)'
+        projects: |
+          **/*.csproj
+    # dotnet pack
+    - task: DotNetCoreCLI@2
+      displayName: 'NuGet Pack'
+      inputs:
+        command: 'pack'
+        arguments: '--configuration $(buildConfiguration) -p:IncludeSymbols=true -p:SymbolPackageFormat=snupkg'
+        projects: '**/*.csproj'
+        versioningScheme: byEnvVar
+        versionEnvVar: PackageVersion
+        includeSymbols: true        
+    # dotnet push
+    - task: NuGetCommand@2
+      displayName: 'NuGet Push'
+      inputs:
+        command: 'push'
+        packagesToPush: '$(Build.ArtifactStagingDirectory)/**/*.nupkg;!$(Build.ArtifactStagingDirectory)/**/*.symbols.nupkg'
+        nuGetFeedType: 'internal'
+        publishVstsFeed: 'mrjb'
+        allowPackageConflicts: true
